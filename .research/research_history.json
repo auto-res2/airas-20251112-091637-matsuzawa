@@ -811,7 +811,49 @@
     "iterations": [
       {
         "iteration_id": 1,
-        "method": "LiFT-LR  (Lipschitz-forecasted, Factorised Two-scale Learning-Rate)\nLet the L trainable LoRA matrices be split on-the-fly into two disjoint sets:\n  • Hot set  H_t  = {ℓ : ρ_{ℓ,t} > 1.5·median_ℓ ρ_{ℓ,t}}\n  • Cool set C_t = complement of H_t.\nStep t.\n1.  Per-layer trust ratios     ρ_{ℓ,t}=‖∇W_{ℓ,t}‖₂ /(‖W_{ℓ,t}‖₂+ε).\n2.  Global curvature proxy     κ_t = ‖∇W_t−∇W_{t−1}‖₂ /(‖W_t−W_{t−1}‖₂+ε).\n3.  EMAs  ρ̄_t , κ̄_t  (β=0.9).\n4.  Lipschitz bound           L̂_t = max{κ̄_t , κ̄_{t−1}}.\n5.  Safety scale              s_L = min{1 , 2 /(L̂_t·α_base)}.\n6.  PID on global trust error e_g = ln(ρ̄_t /ρ*) ⇒ multiplier s_PID.\n7.  Cool-boost factor  b_t  updated by a *separate* PID on\n        e_c = ln(median_{ℓ∈C_t} ρ_{ℓ,t} /ρ*)  (integral only, k_I^c ≈0.03).\n   Constraint  b_t∈[1,  1/δ];  δ=0.25 prevents >4× amplification.\n8.  Final per-set LRs\n        α_H = α_base·s_PID·s_L\n        α_C = α_H · b_t.\n   Implemented by two param groups: hot and cool.\nState cost: ρ̄, κ̄, s_PID, b_t  (4 scalars).  Overhead: one extra boolean mask and scatter operation per step (≈0.7 % wall time).  <40 LoC PyTorch."
+        "method": "LiFT-LR  (Lipschitz-forecasted, Factorised Two-scale Learning-Rate)\nLet the L trainable LoRA matrices be split on-the-fly into two disjoint sets:\n  • Hot set  H_t  = {ℓ : ρ_{ℓ,t} > 1.5·median_ℓ ρ_{ℓ,t}}\n  • Cool set C_t = complement of H_t.\nStep t.\n1.  Per-layer trust ratios     ρ_{ℓ,t}=‖∇W_{ℓ,t}‖₂ /(‖W_{ℓ,t}‖₂+ε).\n2.  Global curvature proxy     κ_t = ‖∇W_t−∇W_{t−1}‖₂ /(‖W_t−W_{t−1}‖₂+ε).\n3.  EMAs  ρ̄_t , κ̄_t  (β=0.9).\n4.  Lipschitz bound           L̂_t = max{κ̄_t , κ̄_{t−1}}.\n5.  Safety scale              s_L = min{1 , 2 /(L̂_t·α_base)}.\n6.  PID on global trust error e_g = ln(ρ̄_t /ρ*) ⇒ multiplier s_PID.\n7.  Cool-boost factor  b_t  updated by a *separate* PID on\n        e_c = ln(median_{ℓ∈C_t} ρ_{ℓ,t} /ρ*)  (integral only, k_I^c ≈0.03).\n   Constraint  b_t∈[1,  1/δ];  δ=0.25 prevents >4× amplification.\n8.  Final per-set LRs\n        α_H = α_base·s_PID·s_L\n        α_C = α_H · b_t.\n   Implemented by two param groups: hot and cool.\nState cost: ρ̄, κ̄, s_PID, b_t  (4 scalars).  Overhead: one extra boolean mask and scatter operation per step (≈0.7 % wall time).  <40 LoC PyTorch.",
+        "experimental_design": {
+          "experiment_summary": "We fine-tune the 600-M-parameter Qwen3 language model on the GSM8K mathematical-reasoning corpus with 4-bit QLoRA adapters (rank r=64).  The goal is to show that the newly developed LiFT-LR learning-rate controller outperforms a strong curvature–aware baseline, MuP-CAT, while staying within the extremely tight memory/compute budget of QLoRA.\n\nWorkflow\n1. Initialise Qwen3-0.6B in NF4 precision and attach LoRA modules to all attention and MLP projection weights.\n2. Feed training batches (size ∈{4,16}) through the model for three epochs (≈7 k optimisation steps).\n3. Optimise LoRA weights with AdamW (β1=0.9, β2=0.95, ε=1e-6) while the scheduler supplies per-step LRs.\n4. Implement LiFT-LR: each step it (i) computes per-layer trust ratios, (ii) partitions adapters into hot/cool sets, (iii) updates two PID controllers plus a Lipschitz safety scale, and (iv) writes two learning-rates into two parameter groups—all from four persistent scalars and one temporary boolean mask (≤0.7 % time overhead).\n5. Every 500 steps log dev exact-match (EM) accuracy, LR_H, LR_C, κ̄_t, |H_t| and NaN occurrences; after training evaluate EM on the full validation split.\n6. Repeat the whole run with three random seeds and again with the comparative scheduler (MuP-CAT).  Hyper-parameters α_base and batch size are swept over the stress grid {1e-4,2e-4,3e-4}×{4,16}; PID gains are tuned by a narrow search.\n7. Aggregate metrics across seeds to report mean±std EM, divergence count, variance and the fraction of steps where the cool-set boost b_t exceeds one.",
+          "evaluation_metrics": [
+            "Exact-match accuracy",
+            "Divergence count",
+            "Per-seed variance",
+            "Fraction of steps b_t>1",
+            "Exact-match accuracy on GSM8K dev; secondary: (a) divergence count, (b) per-seed variance, (c) fraction of steps b_t>1."
+          ],
+          "proposed_method": "LiFT-LR (Lipschitz-forecasted, Factorised Two-scale Learning-Rate) is a memory-frugal learning-rate scheduler tailored for low-rank adaptation of 4-bit LLMs.\n\nObjective: keep a provably safe global step size under sudden curvature spikes while simultaneously allowing well-behaved adapter blocks to learn faster—all using O(1) state.\n\nKey components:\n• Trust ratio ρ_{ℓ,t} for each LoRA matrix quantifies local conditioning.\n• Global curvature proxy κ_t, the secant estimate of the Lipschitz constant between successive steps.\n• Two exponential moving averages (ρ̄_t, κ̄_t; β=0.9) provide smoothed statistics.\n• A Lipschitz safety factor s_L=min(1,2/(κ̂_t·α_base)) with κ̂_t=max(κ̄_t,κ̄_{t−1}) guarantees the global LR does not violate a 2-step robustness bound.\n• A PID controller (gains k_P,k_I,k_D) acts on the logarithmic error e_g=ln(ρ̄_t/ρ*) to steer the global multiplier s_PID toward a target trust ratio ρ*≈0.05.\n• On-the-fly partitioning into Hot (high-curvature) and Cool (low-curvature) adapter sets via a median threshold (ρ>1.5·median).  Only two parameter groups are maintained.\n• A second, integral-only PID updates a boost factor b_t on the cool set from e_c=ln(median_{C_t}ρ/ρ*).  b_t is clipped to [1,4] (δ=0.25) so cool blocks can train up to 4× faster but never destabilise training.\n• Final learning-rates: α_H = α_base·s_PID·s_L for hot blocks and α_C = α_H·b_t for cool blocks.\n\nAlgorithmic procedure per optimisation step (≤40 LoC PyTorch):\n1. Collect weight and gradient norms for each LoRA matrix, compute ρ_{ℓ,t}.\n2. Determine hot/cool boolean mask and scatter parameters into two optimizer groups.\n3. Update EMAs ρ̄_t, κ̄_t and derive s_L.\n4. Run PID updates to obtain s_PID and b_t.\n5. Write α_H and α_C into the two parameter groups.\n6. Advance AdamW with these LRs.\n\nState requirement: four scalars (ρ̄, κ̄, cumulative PID state, b_t).  Runtime overhead: one extra mask + scatter (≈0.7 % of wall-time).",
+          "comparative_methods": [
+            "MuP-CAT scheduler"
+          ],
+          "models_to_use": [
+            "Qwen3-0.6B (0.6B params)"
+          ],
+          "datasets_to_use": [
+            "GSM8K"
+          ],
+          "hyperparameters_to_search": {
+            "alpha_base": "1e-4,2e-4,3e-4",
+            "batch_size": "4,16",
+            "kP": "0.4-0.6",
+            "kI": "0.04-0.06",
+            "kD": "0.005-0.02",
+            "rho_star": "0.03-0.07"
+          }
+        },
+        "experiment_runs": [
+          {
+            "run_id": "proposed-iter1-Qwen3-0.6B-0.6B-params-GSM8K",
+            "method_name": "proposed",
+            "model_name": "Qwen3-0.6B (0.6B params)",
+            "dataset_name": "GSM8K"
+          },
+          {
+            "run_id": "comparative-1-iter1-Qwen3-0.6B-0.6B-params-GSM8K",
+            "method_name": "comparative-1",
+            "model_name": "Qwen3-0.6B (0.6B params)",
+            "dataset_name": "GSM8K"
+          }
+        ]
       }
     ]
   }
