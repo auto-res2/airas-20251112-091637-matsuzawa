@@ -1,0 +1,72 @@
+run_id: comparative-1-iter1-Qwen3-0.6B-0.6B-params-GSM8K
+method: MuP-CAT
+model:
+  name: Qwen3-0.6B
+  precision: nf4
+  lora:
+    r: 64
+    alpha: 64
+    dropout: 0.05
+  tokenizer: qwen3_default
+
+dataset:
+  name: gsm8k
+  config: main
+  text_column: question
+  label_column: answer
+  max_length: 1024
+  val_split: test
+  preprocessing_workers: 8
+  shuffle_buffer: 10_000
+
+training:
+  base_learning_rate: 2.0e-4   # tuned
+  batch_size: 16
+  epochs: 3
+  gradient_accumulation_steps: 1
+  optimizer: adamw
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-6
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  scheduler:
+    name: MuP-CAT            # state-of-the-art curvature PID baseline
+    mu_init: 1.0
+    kP: 0.45
+    kI: 0.05
+    kD: 0.01
+    beta: 0.9               # EMA smoothing of statistics
+  logging_steps: 500
+  evaluation_strategy: steps
+  eval_steps: 500
+  save_strategy: epoch
+  fp16: true
+  seed: 42
+
+optuna:
+  n_trials: 40
+  direction: maximize
+  search_space:
+    base_learning_rate:
+      type: categorical
+      choices: [1.0e-4, 2.0e-4, 3.0e-4]
+    batch_size:
+      type: categorical
+      choices: [4, 16]
+    kP:
+      type: uniform
+      low: 0.3
+      high: 0.6
+    kI:
+      type: uniform
+      low: 0.03
+      high: 0.07
+    kD:
+      type: uniform
+      low: 0.005
+      high: 0.02
+    mu_init:
+      type: loguniform
+      low: 0.5
+      high: 2.0

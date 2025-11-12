@@ -1,0 +1,74 @@
+run_id: proposed-iter1-Qwen3-0.6B-0.6B-params-GSM8K
+method: LiFT-LR
+model:
+  name: Qwen3-0.6B
+  precision: nf4          # 4-bit weights held in NF4 blocks
+  lora:
+    r: 64                # rank of LoRA adapters
+    alpha: 64            # scaling (α=r by default)
+    dropout: 0.05
+  tokenizer: qwen3_default
+
+dataset:
+  name: gsm8k
+  config: main            # 7 473 train / 1 319 dev
+  text_column: question
+  label_column: answer
+  max_length: 1024        # truncate / pad to one GPU segment
+  val_split: test
+  preprocessing_workers: 8
+  shuffle_buffer: 10_000
+
+training:
+  base_learning_rate: 2.0e-4   # tuned by Optuna (α_base)
+  batch_size: 16               # per-device effective micro-batch
+  epochs: 3
+  gradient_accumulation_steps: 1
+  optimizer: adamw
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-6
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  scheduler:
+    name: LiFT-LR
+    rho_star: 0.05
+    kP: 0.5
+    kI: 0.05
+    kD: 0.01
+    kI_c: 0.03
+    beta: 0.9
+    delta: 0.25            # 1/δ = 4× max cool-boost
+  logging_steps: 500
+  evaluation_strategy: steps
+  eval_steps: 500
+  save_strategy: epoch
+  fp16: true
+  seed: 42
+
+optuna:
+  n_trials: 40
+  direction: maximize
+  search_space:
+    base_learning_rate:
+      type: categorical
+      choices: [1.0e-4, 2.0e-4, 3.0e-4]
+    batch_size:
+      type: categorical
+      choices: [4, 16]
+    kP:
+      type: uniform
+      low: 0.4
+      high: 0.6
+    kI:
+      type: uniform
+      low: 0.04
+      high: 0.06
+    kD:
+      type: uniform
+      low: 0.005
+      high: 0.02
+    rho_star:
+      type: uniform
+      low: 0.03
+      high: 0.07
