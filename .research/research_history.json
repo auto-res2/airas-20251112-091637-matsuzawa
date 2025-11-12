@@ -808,6 +808,11 @@
       "expected_result": "GSM8K dev (mean±std):\n Fixed LR .............. 55.0 ±0.9 %\n AutoLRS ............... 57.8 ±0.8 %\n C-TAP  ................ 61.0 ±0.2 %\n MuP-CAT ............... 61.8 ±0.2 %\n LiFT-LR ............... 62.6 ±0.2 %\nAcross 18 stress runs LiFT-LR shows zero divergences; in 64 % of steps b_t>1, cool blocks learn at 1.6× the hot LR, shortening wall-time to reach 60 % EM by ~6 %.",
       "expected_conclusion": "By factorising the LR into a Lipschitz-safe global component and an autonomously boosted cool-set scale, LiFT-LR turns curvature spikes from a global bottleneck into a local exception.  The two-scalar design keeps state to four numbers yet recovers almost all of the accuracy lost to conservative global schedulers, yielding an additional ≈0.8 pp over MuP-CAT without added memory or compute.  This demonstrates that heterogeneous curvature can be tamed—and headroom exploited—within strict QLoRA constraints, and provides the first drop-in scheduler that *raises* rather than only lowers LR where safe."
     },
-    "iterations": []
+    "iterations": [
+      {
+        "iteration_id": 1,
+        "method": "LiFT-LR  (Lipschitz-forecasted, Factorised Two-scale Learning-Rate)\nLet the L trainable LoRA matrices be split on-the-fly into two disjoint sets:\n  • Hot set  H_t  = {ℓ : ρ_{ℓ,t} > 1.5·median_ℓ ρ_{ℓ,t}}\n  • Cool set C_t = complement of H_t.\nStep t.\n1.  Per-layer trust ratios     ρ_{ℓ,t}=‖∇W_{ℓ,t}‖₂ /(‖W_{ℓ,t}‖₂+ε).\n2.  Global curvature proxy     κ_t = ‖∇W_t−∇W_{t−1}‖₂ /(‖W_t−W_{t−1}‖₂+ε).\n3.  EMAs  ρ̄_t , κ̄_t  (β=0.9).\n4.  Lipschitz bound           L̂_t = max{κ̄_t , κ̄_{t−1}}.\n5.  Safety scale              s_L = min{1 , 2 /(L̂_t·α_base)}.\n6.  PID on global trust error e_g = ln(ρ̄_t /ρ*) ⇒ multiplier s_PID.\n7.  Cool-boost factor  b_t  updated by a *separate* PID on\n        e_c = ln(median_{ℓ∈C_t} ρ_{ℓ,t} /ρ*)  (integral only, k_I^c ≈0.03).\n   Constraint  b_t∈[1,  1/δ];  δ=0.25 prevents >4× amplification.\n8.  Final per-set LRs\n        α_H = α_base·s_PID·s_L\n        α_C = α_H · b_t.\n   Implemented by two param groups: hot and cool.\nState cost: ρ̄, κ̄, s_PID, b_t  (4 scalars).  Overhead: one extra boolean mask and scatter operation per step (≈0.7 % wall time).  <40 LoC PyTorch."
+      }
+    ]
   }
 }
